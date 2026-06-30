@@ -27,6 +27,28 @@ fn finalize_timeout(inflight_sequence: bool, configured: Duration) -> Duration {
     }
 }
 
+/// TEMP #4894 instrumentation: when ZELLIJ_DEBUG_MOUSE is set, append a line to
+/// /tmp/zellij-mouse-debug.log describing one stage of the input pipeline. Only
+/// logs payloads that look mouse-related (contain the SGR mouse introducer
+/// `\x1b[<`) to keep the noise down.
+fn mouse_dbg(label: &str, payload: &str, looks_mousey: bool) {
+    if !looks_mousey || std::env::var_os("ZELLIJ_DEBUG_MOUSE").is_none() {
+        return;
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/zellij-mouse-debug.log")
+    {
+        let _ = writeln!(f, "{label}: {payload}");
+    }
+}
+
+fn looks_mousey(bytes: &[u8]) -> bool {
+    bytes.windows(3).any(|w| w == b"\x1b[<") || bytes.windows(2).any(|w| w == b"[<")
+}
+
 pub(crate) fn stdin_loop(
     mut os_input: Box<dyn ClientOsApi>,
     send_input_instructions: SenderWithContext<InputInstruction>,
@@ -157,6 +179,16 @@ pub(crate) fn stdin_loop(
                         let has_partial = parse_output.has_partial_state;
                         let inflight = parse_output.has_inflight_sequence;
                         let residue = parse_output.residue;
+                        mouse_dbg(
+                            "raw_chunk",
+                            &format!("{:?}", String::from_utf8_lossy(&buf)),
+                            looks_mousey(&buf),
+                        );
+                        mouse_dbg(
+                            "residue",
+                            &format!("{:?}", String::from_utf8_lossy(&residue)),
+                            looks_mousey(&residue),
+                        );
                         if residue.is_empty() {
                             // If all bytes were consumed by the host-reply
                             // parser, nothing to feed to the keyboard
@@ -181,7 +213,13 @@ pub(crate) fn stdin_loop(
                             // termwiz parser below; on Incomplete the Kitty
                             // parser keeps its state so the next chunk's
                             // continuation completes the sequence.
-                            match kitty_parser.feed(&residue) {
+                            let kitty_outcome = kitty_parser.feed(&residue);
+                            mouse_dbg(
+                                "kitty_outcome",
+                                &format!("{:?}", kitty_outcome),
+                                looks_mousey(&residue),
+                            );
+                            match kitty_outcome {
                                 KittyParseOutcome::Complete(key_with_modifier) => {
                                     send_input_instructions
                                         .send(InputInstruction::KeyWithModifierEvent(
@@ -210,6 +248,11 @@ pub(crate) fn stdin_loop(
                             maybe_more,
                         );
 
+                        mouse_dbg(
+                            "termwiz_events",
+                            &format!("{:?}", events),
+                            looks_mousey(&residue),
+                        );
                         // Residue contains no OSC or whitelisted CSI
                         // reports — `StdinAnsiParser::feed` strips both
                         // before the keyboard parser sees the bytes.
