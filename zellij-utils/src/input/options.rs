@@ -282,8 +282,10 @@ pub struct Options {
     pub serialization_interval: Option<u64>,
 
     /// Milliseconds to wait for a fragmented terminal escape sequence (split across reads, e.g.
-    /// over SSH) to finish arriving before committing it. Only applies while a multi-byte CSI/OSC
-    /// prefix is buffered; a lone Esc is unaffected. Default 200.
+    /// over SSH) to finish arriving before committing it. Applies while any escape-sequence prefix
+    /// is buffered, including a lone Esc, so it also bounds Esc-key latency: raise it on laggy links
+    /// (e.g. multi-hop SSH) to stop stray characters when moving the mouse while typing; lower it
+    /// for a snappier Esc key on a local terminal. Default 200.
     #[clap(long, value_parser)]
     pub escape_sequence_timeout: Option<u64>,
 

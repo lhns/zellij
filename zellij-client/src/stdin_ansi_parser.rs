@@ -193,12 +193,14 @@ pub struct ParseOutput {
     /// produced no residue (so a lone trailing ESC isn't stranded
     /// indefinitely). See `StdinAnsiParser::finalize`.
     pub has_partial_state: bool,
-    /// `true` when the buffered partial is a multi-byte in-flight control
-    /// sequence: a CSI (`\x1b[…`) or a real OSC (`\x1b]…`, at least 2
-    /// bytes). A lone trailing ESC (1 byte) does not count. The caller
-    /// uses this to grant such a fragmented sequence a longer finalize
-    /// grace so a sequence split across reads (e.g. over SSH) has time to
-    /// reassemble, while keeping the lone-Esc path snappy.
+    /// `true` when the parser is holding any partial escape sequence: a CSI
+    /// (`\x1b[…`), a real OSC (`\x1b]…`), or a lone trailing ESC (`\x1b`). A
+    /// lone ESC counts because it is a potential sequence introducer (a split
+    /// mouse report `\x1b[<…M` whose `\x1b` landed at a read boundary), and
+    /// committing it early strands the rest of the report (#4894). The caller
+    /// uses this to grant the fragment the configurable finalize grace so it
+    /// has time to reassemble. The cost is that a real Esc keypress is also
+    /// held for that grace; the grace is the user-tunable `escape_sequence_timeout`.
     pub has_inflight_sequence: bool,
 }
 
@@ -402,11 +404,14 @@ impl StdinAnsiParser {
         residue.extend(self.strip_replies(bytes));
         out.residue = residue;
         out.has_partial_state = !self.partial_osc.is_empty() || !self.partial_csi.is_empty();
-        // A lone trailing ESC is parked as `partial_osc == [0x1b]` (1 byte) and is an
-        // ambiguous key rather than an in-flight sequence, so exclude it and let the Esc key
-        // keep the short finalize grace. `partial_csi` is always a multi-byte `\x1b[…` CSI; a
-        // `partial_osc` of 2 or more bytes is a real `\x1b]…` OSC.
-        out.has_inflight_sequence = !self.partial_csi.is_empty() || self.partial_osc.len() >= 2;
+        // Any held partial counts as in-flight, including a lone trailing ESC
+        // (`partial_osc == [0x1b]`). The lone ESC is the introducer of a mouse
+        // report `\x1b[<…M` whose `\x1b` landed at a read boundary; committing
+        // it on the 50ms floor strands the rest of the report as keystrokes
+        // (#4894). Granting it the configurable grace lets the continuation
+        // arrive first. `partial_state` and `inflight_sequence` are now
+        // equivalent, but kept distinct for call-site clarity.
+        out.has_inflight_sequence = out.has_partial_state;
         out
     }
 

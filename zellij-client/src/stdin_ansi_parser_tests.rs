@@ -926,19 +926,19 @@ fn split_sgr_mouse_with_idle_flush_between_does_not_leak() {
 }
 
 #[test]
-fn has_inflight_sequence_distinguishes_lone_esc_from_csi() {
-    // A lone trailing ESC is parked as a single byte. It's an ambiguous key, not an in-flight
-    // sequence, so it must keep the short finalize grace (the Esc key stays snappy).
+fn has_inflight_sequence_covers_every_held_prefix_incl_lone_esc() {
+    // A lone trailing ESC is the introducer of a mouse report `\x1b[<…M` whose `\x1b` landed at a
+    // read boundary. It now counts as in-flight so it gets the configurable grace instead of the
+    // 50ms floor, letting the rest of the report arrive before the finalize commits it (#4894).
     let mut p = StdinAnsiParser::new();
     let out = p.feed(b"\x1b");
     assert!(out.has_partial_state, "lone ESC must be buffered");
     assert!(
-        !out.has_inflight_sequence,
-        "lone ESC must not count as an in-flight sequence"
+        out.has_inflight_sequence,
+        "lone ESC must count as in-flight so it gets the configurable grace"
     );
 
-    // An incomplete CSI prefix (`\x1b[` and the SGR-mouse `\x1b[<…`) is a multi-byte control
-    // sequence in flight, so it should get the longer reassembly grace.
+    // Incomplete CSI prefixes (`\x1b[` and the SGR-mouse `\x1b[<…`) are in-flight too.
     let mut p = StdinAnsiParser::new();
     assert!(p.feed(b"\x1b[").has_inflight_sequence, "`\\x1b[` is in-flight");
     let mut p = StdinAnsiParser::new();
@@ -947,7 +947,7 @@ fn has_inflight_sequence_distinguishes_lone_esc_from_csi() {
         "incomplete SGR mouse is in-flight"
     );
 
-    // An incomplete OSC is likewise an in-flight sequence (≥2 buffered bytes).
+    // An incomplete OSC is likewise in-flight.
     let mut p = StdinAnsiParser::new();
     assert!(
         p.feed(b"\x1b]11;rgb:00").has_inflight_sequence,

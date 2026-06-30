@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 * fix: live reload on theme dir changes (https://github.com/zellij-org/zellij/pull/5135)
 * feat: new title-frames UI (https://github.com/zellij-org/zellij/pull/5318)
 * fix: stop fragmented input escape sequences (SGR mouse reports, application-cursor arrow keys) leaking as stray keystrokes when split across reads, e.g. over SSH (https://github.com/zellij-org/zellij/issues/4894)
-* feat: add `escape_sequence_timeout` config option (ms) to tune reassembly of escape sequences fragmented across reads, e.g. over SSH (https://github.com/zellij-org/zellij/issues/4894)
+* feat: add `escape_sequence_timeout` config option (ms) to tune reassembly of escape sequences fragmented across reads, e.g. over SSH; it now also governs a stranded lone Esc (and so bounds Esc-key latency) (https://github.com/zellij-org/zellij/issues/4894)
 
 ## [0.44.3] - 2026-05-13
 * fix(windows): bump windows-sys to 0.59 to align manifest with code, fixing source builds via `cargo install`/`cargo binstall` (https://github.com/zellij-org/zellij/pull/5139)

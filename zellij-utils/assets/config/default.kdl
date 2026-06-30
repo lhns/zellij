@@ -437,9 +437,10 @@ load_plugins {
 // support_kitty_keyboard_protocol false
 
 // Milliseconds to wait for a fragmented terminal escape sequence (split across reads, e.g. over
-// SSH) to finish arriving before committing it. Raise on laggy links if you see stray characters
-// when moving the mouse or pressing arrow/function keys while typing. Only affects in-flight
-// escape sequences; the Esc key and plain typing are unaffected.
+// SSH) to finish arriving before committing it. Raise on laggy links (e.g. multi-hop SSH) if you
+// see stray characters when moving the mouse or pressing arrow/function keys while typing. This
+// also bounds Esc-key latency (a lone Esc is held this long before it registers), so lower it for a
+// snappier Esc on a local terminal. Plain typing is unaffected.
 // (Requires restart)
 // Default: 200
 //
