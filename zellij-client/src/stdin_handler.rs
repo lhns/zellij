@@ -11,11 +11,28 @@ use zellij_utils::{
     vendored::termwiz::input::{InputEvent, InputParser},
 };
 
+/// Idle grace before committing a buffered *lone Esc* (an ambiguous key, parked while we wait to
+/// see whether it's the prefix of an Alt/escape sequence). Kept short so the Esc key stays snappy.
+const LONE_ESC_FINALIZE: Duration = Duration::from_millis(50);
+
+/// How long to wait, while idle, before finalizing buffered ambiguous input. A multi-byte in-flight
+/// control sequence (a CSI/OSC split across reads, common over SSH) gets the longer `configured`
+/// grace so it has time to reassemble; everything else (a lone Esc, or no in-flight sequence at
+/// all) keeps the short `LONE_ESC_FINALIZE`.
+fn finalize_timeout(inflight_sequence: bool, configured: Duration) -> Duration {
+    if inflight_sequence {
+        configured
+    } else {
+        LONE_ESC_FINALIZE
+    }
+}
+
 pub(crate) fn stdin_loop(
     mut os_input: Box<dyn ClientOsApi>,
     send_input_instructions: SenderWithContext<InputInstruction>,
     stdin_ansi_parser: Arc<Mutex<StdinAnsiParser>>,
     explicitly_disable_kitty_keyboard_protocol: bool,
+    escape_sequence_timeout: Duration,
     resize_sender: Option<std::sync::mpsc::Sender<()>>,
 ) {
     // On Windows, choose between two input strategies early — we need this
@@ -99,9 +116,12 @@ pub(crate) fn stdin_loop(
             }
         });
     let mut needs_finalization = false;
+    // `true` when the pending finalization is for a multi-byte in-flight CSI/OSC sequence (which
+    // gets the longer `escape_sequence_timeout` grace), as opposed to a lone Esc (short grace).
+    let mut inflight_sequence = false;
     loop {
         match if needs_finalization {
-            stdin_rx.recv_timeout(Duration::from_millis(50))
+            stdin_rx.recv_timeout(finalize_timeout(inflight_sequence, escape_sequence_timeout))
         } else {
             stdin_rx
                 .recv()
@@ -135,6 +155,7 @@ pub(crate) fn stdin_loop(
                                 .send(InputInstruction::DesktopNotificationResponse(payload));
                         }
                         let has_partial = parse_output.has_partial_state;
+                        let inflight = parse_output.has_inflight_sequence;
                         let residue = parse_output.residue;
                         if residue.is_empty() {
                             // If all bytes were consumed by the host-reply
@@ -147,6 +168,7 @@ pub(crate) fn stdin_loop(
                             // residue when no follow-up arrives.
                             if has_partial {
                                 needs_finalization = true;
+                                inflight_sequence = inflight;
                             }
                             continue;
                         }
@@ -202,6 +224,7 @@ pub(crate) fn stdin_loop(
                         }
 
                         needs_finalization = true;
+                        inflight_sequence = inflight;
                     },
                     Err(e) => {
                         if e == "Session ended" {
@@ -222,6 +245,7 @@ pub(crate) fn stdin_loop(
                     &stdin_ansi_parser,
                 );
                 needs_finalization = false;
+                inflight_sequence = false;
             },
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 log::debug!("STDIN pump disconnected");
@@ -286,4 +310,18 @@ fn build_startup_query_string() -> String {
         query_string.push_str(&format!("\u{1b}]4;{};?\u{1b}\u{5c}", i));
     }
     query_string
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finalize_timeout_is_selective() {
+        let configured = Duration::from_millis(200);
+        // A lone Esc / no in-flight sequence keeps the short grace so the Esc key stays snappy.
+        assert_eq!(finalize_timeout(false, configured), LONE_ESC_FINALIZE);
+        // A multi-byte in-flight CSI/OSC gets the longer configured grace to reassemble.
+        assert_eq!(finalize_timeout(true, configured), configured);
+    }
 }

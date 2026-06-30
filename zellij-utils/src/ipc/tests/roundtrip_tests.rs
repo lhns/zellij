@@ -463,6 +463,7 @@ fn test_client_messages() {
                 scrollback_lines_to_serialize: Some(10000),
                 styled_underlines: Some(true),
                 serialization_interval: Some(1),
+                escape_sequence_timeout: Some(200),
                 disable_session_metadata: Some(true),
                 support_kitty_keyboard_protocol: Some(true),
                 web_server: Some(true),

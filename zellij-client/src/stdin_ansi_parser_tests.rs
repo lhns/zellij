@@ -875,3 +875,88 @@ fn kitty_kbd_event_does_not_wedge_subsequent_forward_reply() {
         );
     }
 }
+
+#[test]
+fn split_sgr_mouse_with_idle_flush_between_does_not_leak() {
+    use zellij_utils::vendored::termwiz::input::{InputEvent, InputParser, KeyCode};
+
+    // End-to-end reproduction of #4894 over the exact client input path:
+    // a mouse report split across two stdin reads with a >50ms idle gap
+    // between the halves. This mirrors `stdin_handler::stdin_loop`:
+    //   1. feed each chunk to StdinAnsiParser; route its residue to the
+    //      keyboard parser with maybe_more=true,
+    //   2. on the idle timeout, drain StdinAnsiParser::finalize() into the
+    //      keyboard parser with maybe_more=false.
+    // The mouse report must survive intact (one Mouse event, zero leaked
+    // keystrokes) instead of `\x1b[<` being eaten and `35;62;16M` leaking
+    // as Char events.
+    let mut ansi = StdinAnsiParser::new();
+    let mut kbd = InputParser::new();
+    let mut events: Vec<InputEvent> = Vec::new();
+
+    // Chunk 1: the report up to (but excluding) its terminator. The host
+    // reply stripper buffers it as a partial CSI, so residue is empty.
+    let o1 = ansi.feed(b"\x1b[<35;62;16");
+    assert!(o1.residue.is_empty());
+    assert!(o1.has_partial_state);
+    kbd.parse(&o1.residue, |e| events.push(e), true);
+
+    // ~50ms idle elapses with no follow-up byte -> the finalize path.
+    let drained = ansi.finalize();
+    kbd.parse(&drained, |e| events.push(e), false);
+
+    // Chunk 2: the terminator arrives in the next read.
+    let o2 = ansi.feed(b"M");
+    kbd.parse(&o2.residue, |e| events.push(e), true);
+
+    let mouse = events
+        .iter()
+        .filter(|e| matches!(e, InputEvent::Mouse(_)))
+        .count();
+    let leaked_chars = events
+        .iter()
+        .filter(|e| matches!(e, InputEvent::Key(k) if matches!(k.key, KeyCode::Char(_))))
+        .count();
+    assert_eq!(mouse, 1, "expected exactly one mouse event, got {:?}", events);
+    assert_eq!(
+        leaked_chars, 0,
+        "no keystrokes should leak from a split mouse report, got {:?}",
+        events
+    );
+}
+
+#[test]
+fn has_inflight_sequence_distinguishes_lone_esc_from_csi() {
+    // A lone trailing ESC is parked as a single byte. It's an ambiguous key, not an in-flight
+    // sequence, so it must keep the short finalize grace (the Esc key stays snappy).
+    let mut p = StdinAnsiParser::new();
+    let out = p.feed(b"\x1b");
+    assert!(out.has_partial_state, "lone ESC must be buffered");
+    assert!(
+        !out.has_inflight_sequence,
+        "lone ESC must not count as an in-flight sequence"
+    );
+
+    // An incomplete CSI prefix (`\x1b[` and the SGR-mouse `\x1b[<…`) is a multi-byte control
+    // sequence in flight, so it should get the longer reassembly grace.
+    let mut p = StdinAnsiParser::new();
+    assert!(p.feed(b"\x1b[").has_inflight_sequence, "`\\x1b[` is in-flight");
+    let mut p = StdinAnsiParser::new();
+    assert!(
+        p.feed(b"\x1b[<35;62").has_inflight_sequence,
+        "incomplete SGR mouse is in-flight"
+    );
+
+    // An incomplete OSC is likewise an in-flight sequence (≥2 buffered bytes).
+    let mut p = StdinAnsiParser::new();
+    assert!(
+        p.feed(b"\x1b]11;rgb:00").has_inflight_sequence,
+        "incomplete OSC is in-flight"
+    );
+
+    // Plain keyboard input buffers nothing.
+    let mut p = StdinAnsiParser::new();
+    let out = p.feed(b"abc");
+    assert!(!out.has_partial_state);
+    assert!(!out.has_inflight_sequence);
+}

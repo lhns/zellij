@@ -742,6 +742,10 @@ pub fn start_client(
         .support_kitty_keyboard_protocol
         .map(|e| !e)
         .unwrap_or(false);
+    // Grace for reassembling a fragmented terminal escape sequence split across stdin reads
+    // (e.g. over SSH) before the idle finalize commits it. Default 200ms. See `stdin_loop`.
+    let escape_sequence_timeout =
+        std::time::Duration::from_millis(config_options.escape_sequence_timeout.unwrap_or(200));
     let should_start_web_server = config_options.web_server.map(|w| w).unwrap_or(false);
     let mut reconnect_to_session = None;
     os_input.unset_raw_mode().unwrap();
@@ -1003,6 +1007,7 @@ pub fn start_client(
                     send_input_instructions,
                     stdin_ansi_parser,
                     explicitly_disable_kitty_keyboard_protocol,
+                    escape_sequence_timeout,
                     Some(resize_sender),
                 )
             }

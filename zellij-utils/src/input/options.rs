@@ -281,6 +281,12 @@ pub struct Options {
     #[clap(long, value_parser)]
     pub serialization_interval: Option<u64>,
 
+    /// Milliseconds to wait for a fragmented terminal escape sequence (split across reads, e.g.
+    /// over SSH) to finish arriving before committing it. Only applies while a multi-byte CSI/OSC
+    /// prefix is buffered; a lone Esc is unaffected. Default 200.
+    #[clap(long, value_parser)]
+    pub escape_sequence_timeout: Option<u64>,
+
     /// If true, will disable writing session metadata to disk
     #[clap(long, value_parser)]
     pub disable_session_metadata: Option<bool>,
@@ -481,6 +487,9 @@ impl Options {
             .or(self.scrollback_lines_to_serialize);
         let styled_underlines = other.styled_underlines.or(self.styled_underlines);
         let serialization_interval = other.serialization_interval.or(self.serialization_interval);
+        let escape_sequence_timeout = other
+            .escape_sequence_timeout
+            .or(self.escape_sequence_timeout);
         let disable_session_metadata = other
             .disable_session_metadata
             .or(self.disable_session_metadata);
@@ -546,6 +555,7 @@ impl Options {
             scrollback_lines_to_serialize,
             styled_underlines,
             serialization_interval,
+            escape_sequence_timeout,
             disable_session_metadata,
             support_kitty_keyboard_protocol,
             web_server,
@@ -624,6 +634,9 @@ impl Options {
             .or_else(|| self.scrollback_lines_to_serialize.clone());
         let styled_underlines = other.styled_underlines.or(self.styled_underlines);
         let serialization_interval = other.serialization_interval.or(self.serialization_interval);
+        let escape_sequence_timeout = other
+            .escape_sequence_timeout
+            .or(self.escape_sequence_timeout);
         let disable_session_metadata = other
             .disable_session_metadata
             .or(self.disable_session_metadata);
@@ -689,6 +702,7 @@ impl Options {
             scrollback_lines_to_serialize,
             styled_underlines,
             serialization_interval,
+            escape_sequence_timeout,
             disable_session_metadata,
             support_kitty_keyboard_protocol,
             web_server,

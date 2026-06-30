@@ -819,6 +819,28 @@ fn parse_sgr_mouse(buf: &[u8]) -> Option<(InputEvent, usize)> {
     ))
 }
 
+/// True when `buf` is an *incomplete* SGR mouse report: it starts with
+/// `\x1b[<` and everything after that is only ASCII digits and `;`, with no
+/// `M`/`m` terminator yet. Such a buffer is unambiguously an in-flight mouse
+/// report (no terminal emits `\x1b[<…` for anything else), so the parser
+/// holds it across reads even on an idle finalize (`maybe_more == false`)
+/// rather than severing `\x1b[<` from its numeric tail and leaking the tail
+/// as keystrokes (#4894: typing while moving the mouse).
+///
+/// Bounded so a runaway or garbled prefix eventually falls through and is
+/// flushed instead of wedging the parser forever; a real SGR mouse report is
+/// far shorter than this.
+fn is_incomplete_sgr_mouse(buf: &[u8]) -> bool {
+    const MAX_SGR_MOUSE_PREFIX: usize = 32;
+    let Some(body) = buf.strip_prefix(b"\x1b[<".as_slice()) else {
+        return false;
+    };
+    if body.len() > MAX_SGR_MOUSE_PREFIX {
+        return false;
+    }
+    body.iter().all(|&b| b.is_ascii_digit() || b == b';')
+}
+
 /// Attempt to parse an OSC (Operating System Command) sequence from the buffer.
 /// Returns `Some((InputEvent::OperatingSystemCommand(payload), len))` if a complete
 /// OSC sequence is found, where `payload` is the bytes between `\x1b]` and the
@@ -1711,7 +1733,22 @@ impl InputParser {
                             return;
                         }
 
-                        if maybe_more && self.buf.as_slice().starts_with(b"\x1b[<") {
+                        // Incomplete SGR mouse report. Hold it until its
+                        // `M`/`m` terminator arrives. We hold even on an idle
+                        // finalize (`maybe_more == false`) as long as the
+                        // buffered bytes are a *clean* in-flight mouse prefix
+                        // (`\x1b[<` + digits/`;`): flushing it would dispatch
+                        // `\x1b[` as Alt+`[` and leak the numeric tail (e.g.
+                        // `35;62;16M`) as literal keystrokes, which is the
+                        // #4894 "typing while moving the mouse" bug. A garbled
+                        // or over-long prefix still falls through so the parser
+                        // can't wedge.
+                        let hold_incomplete_mouse = {
+                            let buf = self.buf.as_slice();
+                            buf.starts_with(b"\x1b[<")
+                                && (maybe_more || is_incomplete_sgr_mouse(buf))
+                        };
+                        if hold_incomplete_mouse {
                             self.flush_parked_esc_if_held(&mut callback);
                             return;
                         }
@@ -2024,46 +2061,64 @@ mod test {
     }
 
     #[test]
-    fn partial_mouse_ambig() {
+    fn incomplete_mouse_finalized_with_no_more_is_held() {
+        // Fragment a mouse sequence across two pushes, finishing the second
+        // with maybe_more=false (NO_MORE), exactly what the stdin idle
+        // finalize does. `\x1b[<0;0;0` is an incomplete-but-unambiguous SGR
+        // mouse prefix (only digits/`;` after `\x1b[<`), so it must be HELD
+        // across the finalize rather than severed into Alt+`[` plus leaked
+        // `Char` events for the numeric tail (#4894). No events yet.
         let mut p = InputParser::new();
         let mut inputs = Vec::new();
-        // Fragment this mouse sequence across two different pushes
         p.parse(b"\x1b[<", |evt| inputs.push(evt), MAYBE_MORE);
         p.parse(b"0;0;0", |evt| inputs.push(evt), NO_MORE);
-        // since we finish with maybe_more false (NO_MORE), the results should be the longest matching
-        // parts of said mouse sequence
+        assert_eq!(Vec::<InputEvent>::new(), inputs);
+        // The terminator completes it into a single mouse event.
+        p.parse(b"M", |evt| inputs.push(evt), MAYBE_MORE);
         assert_eq!(
-            vec![
-                InputEvent::Key(KeyEvent {
-                    modifiers: Modifiers::ALT,
-                    key: KeyCode::Char('['),
-                }),
-                InputEvent::Key(KeyEvent {
-                    modifiers: Modifiers::NONE,
-                    key: KeyCode::Char('<'),
-                }),
-                InputEvent::Key(KeyEvent {
-                    modifiers: Modifiers::NONE,
-                    key: KeyCode::Char('0'),
-                }),
-                InputEvent::Key(KeyEvent {
-                    modifiers: Modifiers::NONE,
-                    key: KeyCode::Char(';'),
-                }),
-                InputEvent::Key(KeyEvent {
-                    modifiers: Modifiers::NONE,
-                    key: KeyCode::Char('0'),
-                }),
-                InputEvent::Key(KeyEvent {
-                    modifiers: Modifiers::NONE,
-                    key: KeyCode::Char(';'),
-                }),
-                InputEvent::Key(KeyEvent {
-                    modifiers: Modifiers::NONE,
-                    key: KeyCode::Char('0'),
-                }),
-            ],
+            vec![InputEvent::Mouse(MouseEvent {
+                x: 0,
+                y: 0,
+                mouse_buttons: MouseButtons::LEFT,
+                modifiers: Modifiers::NONE,
+            })],
             inputs
+        );
+    }
+
+    #[test]
+    fn incomplete_sgr_mouse_held_across_idle_finalize() {
+        // Regression for #4894: typing while moving the mouse leaks SGR
+        // mouse-report tails (e.g. `35;62;16M`) as literal keystrokes.
+        //
+        // An SGR mouse report split across stdin reads with a >50ms gap
+        // gets finalized with maybe_more=false (the idle drain). The
+        // incomplete prefix `\x1b[<35;62;16` must be HELD until its
+        // `M`/`m` terminator arrives, since it is unambiguously an in-flight
+        // mouse report, instead of being severed into Alt+`[` plus
+        // leaked `Char` events for the numeric tail.
+        let mut p = InputParser::new();
+
+        // Chunk 1: partial mouse, no terminator yet.
+        let e1 = p.parse_as_vec(b"\x1b[<35;62;16", MAYBE_MORE);
+        assert!(e1.is_empty(), "partial mouse must be held, got {:?}", e1);
+
+        // Idle finalize: the caller flushes with maybe_more=false. A clean
+        // in-flight mouse prefix must survive this, NOT leak as keystrokes.
+        let e2 = p.parse_as_vec(b"", NO_MORE);
+        assert!(
+            e2.is_empty(),
+            "clean incomplete SGR mouse must survive idle finalize, got {:?}",
+            e2
+        );
+
+        // Tail arrives in the next read, completing exactly one mouse event.
+        let e3 = p.parse_as_vec(b"M", MAYBE_MORE);
+        assert_eq!(e3.len(), 1, "expected one event after terminator, got {:?}", e3);
+        assert!(
+            matches!(e3[0], InputEvent::Mouse(_)),
+            "expected a Mouse event, got {:?}",
+            e3
         );
     }
 

@@ -473,6 +473,10 @@ web_client {
 // 
 // serialization_interval 10000
  
+// Milliseconds to wait for a fragmented escape sequence (e.g. over SSH) to finish
+// 
+// escape_sequence_timeout 200
+ 
 // Enable or disable writing of session metadata to disk (if disabled, other sessions might not know
 // metadata info on this session)
 // (Requires restart)
@@ -606,3 +610,4 @@ web_client {
 // Row breakpoint for mobile_layout (web/always). 0 = always match.
 // Default: 30
 // mobile_threshold_rows 30
+
