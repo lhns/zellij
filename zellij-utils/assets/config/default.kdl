@@ -438,8 +438,8 @@ load_plugins {
 
 // Milliseconds to wait for a fragmented terminal escape sequence (split across reads, e.g. over
 // SSH) to finish arriving before committing it. Raise on laggy links if you see stray characters
-// when moving the mouse or pressing arrow keys while typing; lower for snappier Alt+<key>.
-// Only affects in-flight escape sequences; the Esc key itself is unaffected.
+// when moving the mouse or pressing arrow/function keys while typing. Only affects in-flight
+// escape sequences; the Esc key and plain typing are unaffected.
 // (Requires restart)
 // Default: 200
 //
