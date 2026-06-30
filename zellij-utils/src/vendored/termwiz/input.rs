@@ -1888,6 +1888,15 @@ impl InputParser {
         result
     }
 
+    /// True when the parser is holding bytes from an incomplete input sequence it
+    /// expects more data to finish (e.g. an SS3 `\x1bO…` prefix, or a CSI whose
+    /// final byte hasn't arrived). The stdin loop uses this to grant a fragmented
+    /// sequence the longer reassembly grace before the idle finalize commits it,
+    /// since such sequences are not buffered by the upstream host-reply parser.
+    pub fn has_buffered(&self) -> bool {
+        !self.buf.is_empty()
+    }
+
     #[cfg(windows)]
     pub fn decode_input_records_as_vec(
         &mut self,
@@ -1985,6 +1994,43 @@ mod test {
             ],
             inputs
         );
+    }
+
+    #[test]
+    fn has_buffered_tracks_incomplete_sequences() {
+        // A fresh parser holds nothing.
+        let mut p = InputParser::new();
+        assert!(!p.has_buffered());
+
+        // An SS3 prefix (`\x1bO`, the lead-in for application-cursor arrows and
+        // F1-F4) is held by the keymap waiting for its final byte. The upstream
+        // host-reply parser passes `\x1bO` straight through, so this accessor is
+        // the only signal that a fragmented SS3 key is in flight (#4894).
+        let events = p.parse_as_vec(b"\x1bO", MAYBE_MORE);
+        assert!(events.is_empty(), "SS3 prefix must be held, got {:?}", events);
+        assert!(p.has_buffered(), "incomplete SS3 must register as buffered");
+
+        // The terminator completes it into a single key event and clears the buffer.
+        let events = p.parse_as_vec(b"A", MAYBE_MORE);
+        assert_eq!(
+            events,
+            vec![InputEvent::Key(KeyEvent {
+                modifiers: Modifiers::NONE,
+                key: KeyCode::ApplicationUpArrow,
+            })]
+        );
+        assert!(!p.has_buffered(), "completed sequence leaves nothing buffered");
+
+        // An incomplete CSI prefix is likewise buffered.
+        let mut p = InputParser::new();
+        assert!(p.parse_as_vec(b"\x1b[1;5", MAYBE_MORE).is_empty());
+        assert!(p.has_buffered());
+
+        // Plain keyboard input is dispatched immediately, nothing held.
+        let mut p = InputParser::new();
+        let events = p.parse_as_vec(b"abc", MAYBE_MORE);
+        assert_eq!(events.len(), 3);
+        assert!(!p.has_buffered());
     }
 
     #[test]

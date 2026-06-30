@@ -960,3 +960,43 @@ fn has_inflight_sequence_distinguishes_lone_esc_from_csi() {
     assert!(!out.has_partial_state);
     assert!(!out.has_inflight_sequence);
 }
+
+#[test]
+fn split_ss3_arrow_is_flagged_in_flight() {
+    use zellij_utils::vendored::termwiz::input::{InputEvent, InputParser};
+
+    // An application-cursor-mode arrow key `\x1bOA` (vim/less/fzf over SSH) split across two
+    // stdin reads. The host-reply parser does NOT buffer SS3 (`\x1bO`), so on its own it reports
+    // no in-flight sequence and the fragmented key would get only the 50ms lone-Esc grace. The
+    // keyboard parser holds the prefix instead, so the stdin loop consults BOTH; the combined
+    // signal must be in-flight so SS3 gets the longer reassembly grace (#4894).
+    let mut ansi = StdinAnsiParser::new();
+    let mut kbd = InputParser::new();
+
+    // Chunk 1: the SS3 lead-in, no final byte yet.
+    let o1 = ansi.feed(b"\x1bO");
+    assert_eq!(o1.residue, b"\x1bO", "SS3 passes through the host-reply parser");
+    assert!(
+        !o1.has_inflight_sequence,
+        "the host-reply parser alone does not flag SS3 as in-flight (the gap this fixes)"
+    );
+    let e1 = kbd.parse_as_vec(&o1.residue, true);
+    assert!(e1.is_empty(), "keyboard parser holds the SS3 prefix, got {:?}", e1);
+
+    // The combined signal the stdin loop computes IS in-flight, so SS3 gets the grace.
+    assert!(
+        o1.has_inflight_sequence || kbd.has_buffered(),
+        "combined in-flight signal must be true for a split SS3 key"
+    );
+
+    // Chunk 2: the final byte completes exactly one arrow key, with no leaked characters.
+    let o2 = ansi.feed(b"A");
+    let mut events = kbd.parse_as_vec(&o2.residue, true);
+    events.extend(kbd.parse_as_vec(b"", false)); // flush any held tail, as the idle finalize would
+    assert_eq!(events.len(), 1, "expected exactly one key event, got {:?}", events);
+    assert!(
+        matches!(events[0], InputEvent::Key(_)),
+        "expected a key event (not leaked chars), got {:?}",
+        events
+    );
+}

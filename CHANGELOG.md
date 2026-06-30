@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 * feat: FocusLastPane bindable action (https://github.com/zellij-org/zellij/pull/4241)
 * fix: live reload on theme dir changes (https://github.com/zellij-org/zellij/pull/5135)
 * feat: new title-frames UI (https://github.com/zellij-org/zellij/pull/5318)
-* fix: don't leak SGR mouse-report fragments as keystrokes when typing while moving the mouse (https://github.com/zellij-org/zellij/issues/4894)
+* fix: stop fragmented input escape sequences (SGR mouse reports, application-cursor arrow keys) leaking as stray keystrokes when split across reads, e.g. over SSH (https://github.com/zellij-org/zellij/issues/4894)
 * feat: add `escape_sequence_timeout` config option (ms) to tune reassembly of escape sequences fragmented across reads, e.g. over SSH (https://github.com/zellij-org/zellij/issues/4894)
 
 ## [0.44.3] - 2026-05-13

@@ -168,7 +168,7 @@ pub(crate) fn stdin_loop(
                             // residue when no follow-up arrives.
                             if has_partial {
                                 needs_finalization = true;
-                                inflight_sequence = inflight;
+                                inflight_sequence = inflight || input_parser.has_buffered();
                             }
                             continue;
                         }
@@ -224,7 +224,11 @@ pub(crate) fn stdin_loop(
                         }
 
                         needs_finalization = true;
-                        inflight_sequence = inflight;
+                        // The host-reply parser only buffers CSI/OSC partials; an SS3 (`\x1bO…`)
+                        // or other keymap-held prefix lives in the keyboard parser instead, so
+                        // consult it too. Either way the fragmented sequence gets the longer
+                        // reassembly grace rather than the 50ms lone-Esc floor (#4894).
+                        inflight_sequence = inflight || input_parser.has_buffered();
                     },
                     Err(e) => {
                         if e == "Session ended" {
