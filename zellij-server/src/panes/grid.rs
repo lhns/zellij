@@ -3024,7 +3024,7 @@ impl Grid {
             (_, _) => false,
         };
 
-        match (emit, &self.mouse_mode) {
+        let result = match (emit, &self.mouse_mode) {
             (true, MouseMode::NoEncoding | MouseMode::Utf8) => {
                 let mut msg: Vec<u8> = vec![27, b'[', b'M', self.mouse_buttons_value_x10(event)];
                 msg.append(&mut utf8_mouse_coordinates(
@@ -3044,7 +3044,28 @@ impl Grid {
                 }
             )),
             (_, _) => None,
+        };
+        // TEMP #4894 server-side instrumentation
+        if std::env::var_os("ZELLIJ_DEBUG_MOUSE").is_some()
+            && event.event_type == MouseEventType::Motion
+        {
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/zellij-mouse-server-debug.log")
+            {
+                let _ = writeln!(
+                    f,
+                    "mouse_event_signal motion: tracking={:?} mode={:?} emit={} writes_to_pane={}",
+                    self.mouse_tracking,
+                    self.mouse_mode,
+                    emit,
+                    result.is_some()
+                );
+            }
         }
+        result
     }
     pub fn mouse_left_click_signal(&self, position: &Position, is_held: bool) -> Option<String> {
         let utf8_event = || -> Option<String> {

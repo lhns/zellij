@@ -3107,6 +3107,25 @@ impl Tab {
             )
         };
 
+        // TEMP #4894 server-side instrumentation
+        if std::env::var_os("ZELLIJ_DEBUG_MOUSE").is_some()
+            && raw_input_bytes.windows(3).any(|w| w == b"\x1b[<")
+        {
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/zellij-mouse-server-debug.log")
+            {
+                let _ = writeln!(
+                    f,
+                    "write_to_active_terminal MOUSEY bytes={:?} kitty={}",
+                    String::from_utf8_lossy(&raw_input_bytes),
+                    raw_input_bytes_are_kitty
+                );
+            }
+        }
+
         self.clear_search(client_id);
         self.mouse_help_text_visible.clear();
         let pane_id = if self.floating_panes.panes_are_visible() {
