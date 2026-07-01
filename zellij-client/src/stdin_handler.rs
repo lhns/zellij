@@ -222,6 +222,24 @@ pub(crate) fn stdin_loop(
                         for (input_event, consumed) in events.into_iter() {
                             let take = consumed.min(current_buffer.len());
                             let raw_bytes: Vec<u8> = current_buffer.drain(..take).collect();
+                            // TEMP #4894 client-side instrumentation: show the raw
+                            // bytes each event carries after per-event attribution.
+                            if std::env::var_os("ZELLIJ_DEBUG_MOUSE").is_some() {
+                                use std::io::Write as _;
+                                if let Ok(mut f) = std::fs::OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open("/tmp/zellij-mouse-client-debug.log")
+                                {
+                                    let _ = writeln!(
+                                        f,
+                                        "keyevent: consumed={} raw_bytes={:?} event={:?}",
+                                        consumed,
+                                        String::from_utf8_lossy(&raw_bytes),
+                                        input_event
+                                    );
+                                }
+                            }
                             send_input_instructions
                                 .send(InputInstruction::KeyEvent(input_event, raw_bytes))
                                 .unwrap();
