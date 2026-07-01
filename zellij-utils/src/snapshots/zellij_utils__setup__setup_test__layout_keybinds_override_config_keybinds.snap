@@ -119,6 +119,7 @@ Config {
         scrollback_lines_to_serialize: None,
         styled_underlines: None,
         serialization_interval: None,
+        escape_sequence_timeout: None,
         disable_session_metadata: None,
         support_kitty_keyboard_protocol: None,
         web_server: None,

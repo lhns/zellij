@@ -1225,3 +1225,90 @@ fn unsolicited_theme_notification_classifies_without_outstanding_query() {
         other => panic!("expected HostTerminalThemeChanged, got {:?}", other),
     }
 }
+
+// A mouse report `\x1b[<...M` can be split across two stdin reads. Which side of the split the
+// boundary lands on decides how it is handled, and these tests exercise both using the same public
+// API the stdin loop uses (`feed`, `pending_partial`, `finalize_lone_esc`, `InputParser::parse`).
+
+#[test]
+fn partial_csi_split_mouse_reassembles_across_idle_hold() {
+    use zellij_utils::vendored::termwiz::input::{InputEvent, InputParser, KeyCode};
+
+    let mut ansi = StdinAnsiParser::new();
+    let mut kbd = InputParser::new();
+    let mut events: Vec<InputEvent> = Vec::new();
+
+    // Read 1 ends mid-report, after the `\x1b[<` introducer. StdinAnsiParser buffers it as a partial
+    // CSI, so `pending_partial()` reports `ReplyInProgress` and nothing reaches the keyboard parser.
+    let o1 = ansi.feed(b"\x1b[<35;62;16");
+    assert!(o1.residue.is_empty(), "partial CSI must be buffered, not leaked");
+    assert_eq!(ansi.pending_partial(), PendingPartial::ReplyInProgress);
+    kbd.parse(&o1.residue, |e| events.push(e), true);
+
+    // The idle tick fires but the reply grace has NOT elapsed, so the loop keeps waiting and does
+    // NOT flush the partial. We model that by simply not finalizing here.
+
+    // Read 2 delivers the terminator. The rejoined report passes through as residue and the keyboard
+    // parser turns it into exactly one Mouse event, with no stray characters.
+    let o2 = ansi.feed(b"M");
+    assert_eq!(o2.residue, b"\x1b[<35;62;16M", "the report reassembles intact");
+    kbd.parse(&o2.residue, |e| events.push(e), true);
+
+    let mouse = events
+        .iter()
+        .filter(|e| matches!(e, InputEvent::Mouse(_)))
+        .count();
+    let leaked_chars = events
+        .iter()
+        .filter(|e| matches!(e, InputEvent::Key(k) if matches!(k.key, KeyCode::Char(_))))
+        .count();
+    assert_eq!(mouse, 1, "expected exactly one mouse event, got {:?}", events);
+    assert_eq!(
+        leaked_chars, 0,
+        "no keystrokes should leak from a split mouse report, got {:?}",
+        events
+    );
+}
+
+#[test]
+fn lone_esc_boundary_split_leaks_in_legacy_mode() {
+    use zellij_utils::vendored::termwiz::input::{InputEvent, InputParser, KeyCode};
+
+    // Documented limitation: when the split lands on the report's leading `\x1b`, the bare Esc is
+    // ambiguous (the Esc key vs a sequence introducer), so it stays on the short flush path and
+    // commits as an Esc keypress. The continuation then arrives with no introducer and leaks as
+    // literal characters. Only the Kitty keyboard protocol (Esc becomes `\x1b[27u`) removes this
+    // ambiguity; the fragmented-sequence grace deliberately does not cover it.
+    let mut ansi = StdinAnsiParser::new();
+    let mut kbd = InputParser::new();
+    let mut events: Vec<InputEvent> = Vec::new();
+
+    let o1 = ansi.feed(b"\x1b");
+    assert_eq!(ansi.pending_partial(), PendingPartial::LoneEsc);
+    kbd.parse(&o1.residue, |e| events.push(e), true);
+
+    // The lone Esc flushes on the short tick.
+    let drained = ansi.finalize_lone_esc();
+    assert_eq!(drained, b"\x1b", "the lone Esc is drained on flush");
+    kbd.parse(&drained, |e| events.push(e), false);
+
+    // Continuation arrives after the Esc has already committed.
+    let o2 = ansi.feed(b"[<35;62;16M");
+    assert_eq!(o2.residue, b"[<35;62;16M", "no introducer left to rejoin");
+    kbd.parse(&o2.residue, |e| events.push(e), true);
+
+    let mouse = events
+        .iter()
+        .filter(|e| matches!(e, InputEvent::Mouse(_)))
+        .count();
+    let leaked_chars = events
+        .iter()
+        .filter(|e| matches!(e, InputEvent::Key(k) if matches!(k.key, KeyCode::Char(_))))
+        .count();
+    assert_eq!(mouse, 0, "no mouse event survives the lone-Esc flush, got {:?}", events);
+    assert!(
+        leaked_chars > 0,
+        "the continuation leaks as characters after the lone-Esc flush, got {:?}",
+        events
+    );
+}

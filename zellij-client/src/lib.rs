@@ -987,6 +987,7 @@ pub fn start_client(
     }
 
     let on_force_close = config_options.on_force_close.unwrap_or_default();
+    let escape_sequence_timeout = config_options.escape_sequence_timeout;
     let stdin_ansi_parser = Arc::new(Mutex::new(StdinAnsiParser::new()));
 
     let (resize_sender, resize_receiver) = std::sync::mpsc::channel::<()>();
@@ -1004,6 +1005,7 @@ pub fn start_client(
                     stdin_ansi_parser,
                     explicitly_disable_kitty_keyboard_protocol,
                     Some(resize_sender),
+                    escape_sequence_timeout,
                 )
             }
         });

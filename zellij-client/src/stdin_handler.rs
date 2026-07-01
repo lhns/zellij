@@ -14,13 +14,29 @@ use zellij_utils::{
     vendored::termwiz::input::{InputEvent, InputParser},
 };
 
+/// The grace period an incomplete escape sequence (a partial CSI/OSC split across reads) is held
+/// before being flushed to the keyboard, letting a fragmented sequence over a laggy link finish
+/// arriving. Configurable via `escape_sequence_timeout` (milliseconds); when unset the built-in
+/// guard is used. Does not affect a lone Esc, which stays on the fixed short flush interval.
+fn reply_flush_grace(configured: Option<u64>) -> Duration {
+    configured
+        .map(Duration::from_millis)
+        .unwrap_or(PARTIAL_REPLY_FLUSH_GUARD)
+}
+
 pub(crate) fn stdin_loop(
     mut os_input: Box<dyn ClientOsApi>,
     send_input_instructions: SenderWithContext<InputInstruction>,
     stdin_ansi_parser: Arc<Mutex<StdinAnsiParser>>,
     explicitly_disable_kitty_keyboard_protocol: bool,
     resize_sender: Option<std::sync::mpsc::Sender<()>>,
+    escape_sequence_timeout: Option<u64>,
 ) {
+    // How long an incomplete escape sequence (a partial CSI/OSC split across reads) is held before
+    // it is flushed as input, so a fragmented sequence over a laggy link can finish arriving. When
+    // unset the built-in guard is used, so default behavior is unchanged. This does not affect the
+    // Esc key, which stays on the fixed short flush interval.
+    let reply_grace = reply_flush_grace(escape_sequence_timeout);
     // On Windows, choose between two input strategies early — we need this
     // decision before the startup ANSI query below.
     //
@@ -232,7 +248,7 @@ pub(crate) fn stdin_loop(
                         let elapsed = reply_in_progress_since
                             .map(|since| since.elapsed())
                             .unwrap_or_default();
-                        if elapsed >= PARTIAL_REPLY_FLUSH_GUARD {
+                        if elapsed >= reply_grace {
                             let drained = stdin_ansi_parser.lock().unwrap().finalize_force();
                             drain_partial_to_keyboard(
                                 &mut input_parser,
@@ -247,6 +263,10 @@ pub(crate) fn stdin_loop(
                         }
                     },
                     _ => {
+                        // A lone Esc (or nothing buffered) is flushed on the short tick. A bare
+                        // `\x1b` is ambiguous (the Esc key vs a sequence introducer), so it stays on
+                        // the fast path to keep the Esc key responsive; the fragmented-sequence grace
+                        // above only covers unambiguous multi-byte prefixes.
                         let drained = stdin_ansi_parser.lock().unwrap().finalize_lone_esc();
                         drain_partial_to_keyboard(
                             &mut input_parser,
@@ -346,5 +366,17 @@ mod tests {
             "startup query must not contain OSC 4 palette-register probes: {:?}",
             query
         );
+    }
+
+    #[test]
+    fn reply_flush_grace_defaults_when_unset_and_honors_the_configured_value() {
+        use super::{reply_flush_grace, PARTIAL_REPLY_FLUSH_GUARD};
+        use std::time::Duration;
+
+        // Unset keeps the built-in guard, so default behavior is unchanged.
+        assert_eq!(reply_flush_grace(None), PARTIAL_REPLY_FLUSH_GUARD);
+        // A configured value is taken verbatim (milliseconds), whether below or above the default.
+        assert_eq!(reply_flush_grace(Some(200)), Duration::from_millis(200));
+        assert_eq!(reply_flush_grace(Some(3000)), Duration::from_millis(3000));
     }
 }

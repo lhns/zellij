@@ -473,6 +473,12 @@ web_client {
 // 
 // serialization_interval 10000
  
+// Milliseconds to hold an incomplete escape sequence (a partial CSI/OSC split across
+// reads, e.g. over SSH) before flushing it as input; raise on laggy links if the mouse
+// leaks stray characters. Does not affect Esc-key latency. Unset: about one second.
+// 
+// escape_sequence_timeout 2000
+ 
 // Enable or disable writing of session metadata to disk (if disabled, other sessions might not know
 // metadata info on this session)
 // (Requires restart)
@@ -606,3 +612,4 @@ web_client {
 // Row breakpoint for mobile_layout (web/always). 0 = always match.
 // Default: 30
 // mobile_threshold_rows 30
+

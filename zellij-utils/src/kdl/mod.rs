@@ -2787,6 +2787,9 @@ impl Options {
         let serialization_interval =
             kdl_property_first_arg_as_i64_or_error!(kdl_options, "serialization_interval")
                 .map(|(scroll_buffer_size, _entry)| scroll_buffer_size as u64);
+        let escape_sequence_timeout =
+            kdl_property_first_arg_as_i64_or_error!(kdl_options, "escape_sequence_timeout")
+                .map(|(escape_sequence_timeout, _entry)| escape_sequence_timeout as u64);
         let disable_session_metadata =
             kdl_property_first_arg_as_bool_or_error!(kdl_options, "disable_session_metadata")
                 .map(|(v, _)| v);
@@ -2933,6 +2936,7 @@ impl Options {
             scrollback_lines_to_serialize,
             styled_underlines,
             serialization_interval,
+            escape_sequence_timeout,
             disable_session_metadata,
             support_kitty_keyboard_protocol,
             web_server,
@@ -3821,6 +3825,35 @@ impl Options {
             None
         }
     }
+    fn escape_sequence_timeout_to_kdl(&self, add_comments: bool) -> Option<KdlNode> {
+        let comment_text = format!(
+            "{}\n{}\n{}\n{}\n{}",
+            " ",
+            "// Milliseconds to hold an incomplete escape sequence (a partial CSI/OSC split across",
+            "// reads, e.g. over SSH) before flushing it as input; raise on laggy links if the mouse",
+            "// leaks stray characters. Does not affect Esc-key latency. Unset: about one second.",
+            "// ",
+        );
+
+        let create_node = |node_value: u64| -> KdlNode {
+            let mut node = KdlNode::new("escape_sequence_timeout");
+            node.push(KdlValue::Base10(node_value as i64));
+            node
+        };
+        if let Some(escape_sequence_timeout) = self.escape_sequence_timeout {
+            let mut node = create_node(escape_sequence_timeout);
+            if add_comments {
+                node.set_leading(format!("{}\n", comment_text));
+            }
+            Some(node)
+        } else if add_comments {
+            let mut node = create_node(2000);
+            node.set_leading(format!("{}\n// ", comment_text));
+            Some(node)
+        } else {
+            None
+        }
+    }
     fn disable_session_metadata_to_kdl(&self, add_comments: bool) -> Option<KdlNode> {
         let comment_text = format!("{}\n{}\n{}\n{}\n{}\n{}",
             " ",
@@ -4542,6 +4575,9 @@ impl Options {
         }
         if let Some(serialization_interval) = self.serialization_interval_to_kdl(add_comments) {
             nodes.push(serialization_interval);
+        }
+        if let Some(escape_sequence_timeout) = self.escape_sequence_timeout_to_kdl(add_comments) {
+            nodes.push(escape_sequence_timeout);
         }
         if let Some(disable_session_metadata) = self.disable_session_metadata_to_kdl(add_comments) {
             nodes.push(disable_session_metadata);
@@ -7328,6 +7364,7 @@ fn config_options_to_string() {
         scrollback_lines_to_serialize 1000
         styled_underlines false
         serialization_interval 1
+        escape_sequence_timeout 200
         disable_session_metadata true
         support_kitty_keyboard_protocol false
         web_server true
@@ -7378,6 +7415,7 @@ fn config_options_to_string_with_comments() {
         scrollback_lines_to_serialize 1000
         styled_underlines false
         serialization_interval 1
+        escape_sequence_timeout 200
         disable_session_metadata true
         support_kitty_keyboard_protocol false
         web_server true

@@ -191,6 +191,12 @@ styled_underlines false
 // 
 serialization_interval 1
  
+// Milliseconds to hold an incomplete escape sequence (a partial CSI/OSC split across
+// reads, e.g. over SSH) before flushing it as input; raise on laggy links if the mouse
+// leaks stray characters. Does not affect Esc-key latency. Unset: about one second.
+// 
+escape_sequence_timeout 200
+ 
 // Enable or disable writing of session metadata to disk (if disabled, other sessions might not know
 // metadata info on this session)
 // (Requires restart)
@@ -324,3 +330,4 @@ mobile_threshold_cols 72
 // Row breakpoint for mobile_layout (web/always). 0 = always match.
 // Default: 30
 mobile_threshold_rows 0
+
