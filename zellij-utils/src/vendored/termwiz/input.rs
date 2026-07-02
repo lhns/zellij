@@ -1594,7 +1594,11 @@ impl InputParser {
         }
     }
 
-    fn dispatch_callback<F: FnMut(InputEvent, usize)>(&mut self, mut callback: F, event: InputEvent) {
+    fn dispatch_callback<F: FnMut(InputEvent, usize)>(
+        &mut self,
+        mut callback: F,
+        event: InputEvent,
+    ) {
         // `self.buf` is already advanced past this event, so `self.buf.len()` is
         // the remainder `parse_with_consumed` diffs into a per-event byte count.
         match (self.state, &event) {
@@ -2016,7 +2020,12 @@ mod test {
         // only the bytes it consumed, so the key forwards `a`, not the mouse
         // sequences that used to leak into the pane.
         let events = parse_with_raw_bytes(b"a\x1b[<35;52;16M\x1b[<35;49;16M", MAYBE_MORE);
-        assert_eq!(events.len(), 3, "expected key + 2 mouse events, got {:?}", events);
+        assert_eq!(
+            events.len(),
+            3,
+            "expected key + 2 mouse events, got {:?}",
+            events
+        );
         assert!(
             matches!(
                 events[0].0,
