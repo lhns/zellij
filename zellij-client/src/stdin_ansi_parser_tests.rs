@@ -1243,7 +1243,10 @@ fn partial_csi_split_mouse_reassembles_across_idle_hold() {
     // Read 1 ends mid-report, after the `\x1b[<` introducer. StdinAnsiParser buffers it as a partial
     // CSI, so `pending_partial()` reports `ReplyInProgress` and nothing reaches the keyboard parser.
     let o1 = ansi.feed(b"\x1b[<35;62;16");
-    assert!(o1.residue.is_empty(), "partial CSI must be buffered, not leaked");
+    assert!(
+        o1.residue.is_empty(),
+        "partial CSI must be buffered, not leaked"
+    );
     assert_eq!(ansi.pending_partial(), PendingPartial::ReplyInProgress);
     kbd.parse(&o1.residue, |e| events.push(e), true);
 
@@ -1253,7 +1256,10 @@ fn partial_csi_split_mouse_reassembles_across_idle_hold() {
     // Read 2 delivers the terminator. The rejoined report passes through as residue and the keyboard
     // parser turns it into exactly one Mouse event, with no stray characters.
     let o2 = ansi.feed(b"M");
-    assert_eq!(o2.residue, b"\x1b[<35;62;16M", "the report reassembles intact");
+    assert_eq!(
+        o2.residue, b"\x1b[<35;62;16M",
+        "the report reassembles intact"
+    );
     kbd.parse(&o2.residue, |e| events.push(e), true);
 
     let mouse = events
@@ -1264,7 +1270,11 @@ fn partial_csi_split_mouse_reassembles_across_idle_hold() {
         .iter()
         .filter(|e| matches!(e, InputEvent::Key(k) if matches!(k.key, KeyCode::Char(_))))
         .count();
-    assert_eq!(mouse, 1, "expected exactly one mouse event, got {:?}", events);
+    assert_eq!(
+        mouse, 1,
+        "expected exactly one mouse event, got {:?}",
+        events
+    );
     assert_eq!(
         leaked_chars, 0,
         "no keystrokes should leak from a split mouse report, got {:?}",
@@ -1282,7 +1292,10 @@ fn lone_esc_split_mouse_does_not_leak_when_grace_not_elapsed() {
 
     // Read 1 ends on the bare introducer. It is buffered, so nothing reaches the keyboard parser.
     let o1 = ansi.feed(b"\x1b");
-    assert!(o1.residue.is_empty(), "lone ESC must be buffered, not leaked");
+    assert!(
+        o1.residue.is_empty(),
+        "lone ESC must be buffered, not leaked"
+    );
     assert_eq!(ansi.pending_partial(), PendingPartial::LoneEsc);
     kbd.parse(&o1.residue, |e| events.push(e), true);
 
@@ -1292,7 +1305,10 @@ fn lone_esc_split_mouse_does_not_leak_when_grace_not_elapsed() {
     // Read 2 delivers the continuation. The rejoined report passes through as residue and the
     // keyboard parser turns it into exactly one Mouse event.
     let o2 = ansi.feed(b"[<35;62;16M");
-    assert_eq!(o2.residue, b"\x1b[<35;62;16M", "the report reassembles intact");
+    assert_eq!(
+        o2.residue, b"\x1b[<35;62;16M",
+        "the report reassembles intact"
+    );
     kbd.parse(&o2.residue, |e| events.push(e), true);
 
     let mouse = events
@@ -1303,7 +1319,11 @@ fn lone_esc_split_mouse_does_not_leak_when_grace_not_elapsed() {
         .iter()
         .filter(|e| matches!(e, InputEvent::Key(k) if matches!(k.key, KeyCode::Char(_))))
         .count();
-    assert_eq!(mouse, 1, "expected exactly one mouse event, got {:?}", events);
+    assert_eq!(
+        mouse, 1,
+        "expected exactly one mouse event, got {:?}",
+        events
+    );
     assert_eq!(
         leaked_chars, 0,
         "no keystrokes should leak from a split mouse report, got {:?}",
@@ -1346,7 +1366,11 @@ fn lone_esc_split_mouse_leaks_when_grace_already_elapsed() {
         .iter()
         .filter(|e| matches!(e, InputEvent::Key(k) if matches!(k.key, KeyCode::Char(_))))
         .count();
-    assert_eq!(mouse, 0, "no mouse event survives the lone-Esc flush, got {:?}", events);
+    assert_eq!(
+        mouse, 0,
+        "no mouse event survives the lone-Esc flush, got {:?}",
+        events
+    );
     assert!(
         leaked_chars > 0,
         "the continuation leaks as characters after the lone-Esc flush, got {:?}",

@@ -410,6 +410,9 @@ mod tests {
         assert_eq!(lone_esc_flush_grace(None), LONE_ESC_FLUSH_INTERVAL);
         // A configured value is taken verbatim (milliseconds).
         assert_eq!(lone_esc_flush_grace(Some(200)), Duration::from_millis(200));
-        assert_eq!(lone_esc_flush_grace(Some(1000)), Duration::from_millis(1000));
+        assert_eq!(
+            lone_esc_flush_grace(Some(1000)),
+            Duration::from_millis(1000)
+        );
     }
 }
