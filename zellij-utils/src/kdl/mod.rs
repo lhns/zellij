@@ -3829,9 +3829,9 @@ impl Options {
         let comment_text = format!(
             "{}\n{}\n{}\n{}\n{}",
             " ",
-            "// Milliseconds to hold an incomplete escape sequence (a partial CSI/OSC split across",
-            "// reads, e.g. over SSH) before flushing it as input; raise on laggy links if the mouse",
-            "// leaks stray characters. Does not affect Esc-key latency. Unset: about one second.",
+            "// Milliseconds to hold a lone Esc arriving at a read boundary before committing it,",
+            "// so a fragmented escape sequence (e.g. over SSH) can finish arriving; raise on laggy",
+            "// links if the mouse leaks stray characters. Delays the Esc key by the same amount.",
             "// ",
         );
 
@@ -3847,7 +3847,7 @@ impl Options {
             }
             Some(node)
         } else if add_comments {
-            let mut node = create_node(2000);
+            let mut node = create_node(200);
             node.set_leading(format!("{}\n// ", comment_text));
             Some(node)
         } else {

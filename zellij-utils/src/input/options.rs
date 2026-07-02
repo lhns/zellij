@@ -281,11 +281,12 @@ pub struct Options {
     #[clap(long, value_parser)]
     pub serialization_interval: Option<u64>,
 
-    /// Milliseconds to hold an incomplete escape sequence (a partial CSI/OSC split across reads,
-    /// e.g. over SSH) before flushing it as input, giving the rest of the sequence time to arrive.
-    /// Raise it on laggy links (e.g. multi-hop SSH) so a mouse report split across reads is not
-    /// dispatched as stray characters. This does not affect Esc-key latency. When unset, a built-in
-    /// grace of about one second is used.
+    /// Milliseconds to hold a lone Esc that arrives at a read boundary before committing it as an
+    /// Esc keypress, giving a fragmented escape sequence (e.g. a mouse report split across reads
+    /// over SSH) time to finish arriving. Raise it on laggy links (e.g. multi-hop SSH) to stop
+    /// stray characters when typing while moving the mouse, at the cost of delaying the Esc key by
+    /// the same amount. Multi-byte partial sequences are always held for about one second
+    /// regardless of this setting. When unset, a short built-in delay is used.
     #[clap(long, value_parser)]
     pub escape_sequence_timeout: Option<u64>,
 

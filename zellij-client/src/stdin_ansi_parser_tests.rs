@@ -1226,9 +1226,11 @@ fn unsolicited_theme_notification_classifies_without_outstanding_query() {
     }
 }
 
-// A mouse report `\x1b[<...M` can be split across two stdin reads. Which side of the split the
-// boundary lands on decides how it is handled, and these tests exercise both using the same public
-// API the stdin loop uses (`feed`, `pending_partial`, `finalize_lone_esc`, `InputParser::parse`).
+// A mouse report `\x1b[<...M` can be split across two stdin reads. Where the boundary lands decides
+// how it is handled: a multi-byte partial (`\x1b[<...`) is always held until it completes, while a
+// bare `\x1b` is ambiguous (the Esc key vs a sequence introducer) and is only held for the
+// `escape_sequence_timeout` grace. These tests exercise the cases using the same public API the
+// stdin loop uses (`feed`, `pending_partial`, `finalize_lone_esc`, `InputParser::parse`).
 
 #[test]
 fn partial_csi_split_mouse_reassembles_across_idle_hold() {
@@ -1271,14 +1273,53 @@ fn partial_csi_split_mouse_reassembles_across_idle_hold() {
 }
 
 #[test]
-fn lone_esc_boundary_split_leaks_in_legacy_mode() {
+fn lone_esc_split_mouse_does_not_leak_when_grace_not_elapsed() {
     use zellij_utils::vendored::termwiz::input::{InputEvent, InputParser, KeyCode};
 
-    // Documented limitation: when the split lands on the report's leading `\x1b`, the bare Esc is
-    // ambiguous (the Esc key vs a sequence introducer), so it stays on the short flush path and
-    // commits as an Esc keypress. The continuation then arrives with no introducer and leaks as
-    // literal characters. Only the Kitty keyboard protocol (Esc becomes `\x1b[27u`) removes this
-    // ambiguity; the fragmented-sequence grace deliberately does not cover it.
+    let mut ansi = StdinAnsiParser::new();
+    let mut kbd = InputParser::new();
+    let mut events: Vec<InputEvent> = Vec::new();
+
+    // Read 1 ends on the bare introducer. It is buffered, so nothing reaches the keyboard parser.
+    let o1 = ansi.feed(b"\x1b");
+    assert!(o1.residue.is_empty(), "lone ESC must be buffered, not leaked");
+    assert_eq!(ansi.pending_partial(), PendingPartial::LoneEsc);
+    kbd.parse(&o1.residue, |e| events.push(e), true);
+
+    // The idle tick fires but the configured grace has NOT elapsed, so the guard keeps waiting and
+    // does NOT drain the lone Esc. We model that by simply not finalizing here.
+
+    // Read 2 delivers the continuation. The rejoined report passes through as residue and the
+    // keyboard parser turns it into exactly one Mouse event.
+    let o2 = ansi.feed(b"[<35;62;16M");
+    assert_eq!(o2.residue, b"\x1b[<35;62;16M", "the report reassembles intact");
+    kbd.parse(&o2.residue, |e| events.push(e), true);
+
+    let mouse = events
+        .iter()
+        .filter(|e| matches!(e, InputEvent::Mouse(_)))
+        .count();
+    let leaked_chars = events
+        .iter()
+        .filter(|e| matches!(e, InputEvent::Key(k) if matches!(k.key, KeyCode::Char(_))))
+        .count();
+    assert_eq!(mouse, 1, "expected exactly one mouse event, got {:?}", events);
+    assert_eq!(
+        leaked_chars, 0,
+        "no keystrokes should leak from a split mouse report, got {:?}",
+        events
+    );
+}
+
+#[test]
+fn lone_esc_split_mouse_leaks_when_grace_already_elapsed() {
+    use zellij_utils::vendored::termwiz::input::{InputEvent, InputParser, KeyCode};
+
+    // Control case documenting the tradeoff: once the grace elapses (the short default when
+    // `escape_sequence_timeout` is unset), the lone Esc flushes and commits as an Esc keypress. The
+    // continuation then arrives with no introducer and leaks as literal characters. Raising
+    // `escape_sequence_timeout` buys the continuation time to arrive first (the test above); the
+    // Kitty keyboard protocol (Esc arrives as `\x1b[27u`) removes the ambiguity entirely.
     let mut ansi = StdinAnsiParser::new();
     let mut kbd = InputParser::new();
     let mut events: Vec<InputEvent> = Vec::new();

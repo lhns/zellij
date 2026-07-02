@@ -436,14 +436,14 @@ load_plugins {
 //
 // support_kitty_keyboard_protocol false
 
-// Milliseconds to hold an incomplete terminal escape sequence (a partial CSI/OSC split across reads,
-// e.g. over SSH) before flushing it as input, giving the rest of the sequence time to arrive.
-// Raise on laggy links (e.g. multi-hop SSH) if you see stray characters when moving the mouse while
-// typing. This does not affect Esc-key latency; a lone Esc still registers promptly. When unset, a
-// built-in grace of about one second is used.
+// Milliseconds to hold a lone Esc that arrives at a read boundary before committing it as an Esc
+// keypress, giving a fragmented terminal escape sequence (split across reads, e.g. over SSH) time
+// to finish arriving. Raise on laggy links (e.g. multi-hop SSH) if you see stray characters when
+// moving the mouse while typing, at the cost of delaying the Esc key by the same amount. When
+// unset, a short built-in delay is used.
 // (Requires restart)
 //
-// escape_sequence_timeout 2000
+// escape_sequence_timeout 200
 
 // Whether to make sure a local web server is running when a new Zellij session starts.
 // This web server will allow creating new sessions and attaching to existing ones that have
